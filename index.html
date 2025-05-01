@@ -1,34 +1,44 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gaze Estimation Demo</title>
     <script src="gaze-estimation.js"></script>
     <style>
-        #video, #canvas {
+        #video,
+        #canvas {
             box-sizing: content-box;
             width: 480px;
             height: 360px;
         }
-        #video, #canvas {
+
+        #video,
+        #canvas {
             border: 5px solid black;
         }
+
         #canvas.valid {
             border-color: green;
         }
+
         #canvas.invalid {
             border-color: red;
         }
+
         .pos {
             width: 240px;
             height: 180px;
         }
     </style>
 </head>
+
 <body>
-        <h1>Gaze Estimation Demo</h1>
+    <h1>Gaze Estimation Demo</h1>
     <p>Allow camera access to start gaze estimation.</p>
+    <p id="status">Loading...</p>
+    <p id="fps"></p>
     <div style="display: flex">
         <video id="video" autoplay playsinline></video>
         <canvas id="canvas"></canvas>
@@ -50,98 +60,98 @@
         <canvas class="pos" data-for="bottomRight"></canvas>
     </div>
     <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        async function processVideoFrame(canvas) {
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const {estimateImage, gazePitch, gazeYaw } = await GazeEstimator.estimate(canvas, canvas);
-            if (estimateImage) {
-                //ctx.putImageData(estimateImage, 0, 0);
-            }
 
-            return {estimateImage, gazePitch, gazeYaw }
+        if (document.readyState === "loading") {
+            // Loading hasn't finished yet
+            document.addEventListener("DOMContentLoaded", startGazeEstimator);
+        } else {
+            // `DOMContentLoaded` has already fired
+            startGazeEstimator();
         }
 
-        async function startGazeEstimation() {
-            // Request camera access
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
+        function startGazeEstimator() {
+            document.getElementById('status').innerText = 'model読み込み中...';
 
-            video.addEventListener('loadeddata', async () => {
-                async function estimateGaze() {
-                    const {estimateImage, gazePitch, gazeYaw }= await processVideoFrame(canvas);
-                    if (estimateImage) {
-                        const isOB = isOutOfBounds(gazePitch, gazeYaw);
-                        if (isOB) {
-                            canvas.classList.add('invalid');
-                            canvas.classList.remove('valid');
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            async function processVideoFrame(canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const { estimateImage, gazePitch, gazeYaw, isOutOfBounds } = await GazeEstimator.estimate(canvas, canvas);
+                if (estimateImage) {
+                    //ctx.putImageData(estimateImage, 0, 0);
+                }
+
+                return { estimateImage, gazePitch, gazeYaw, isOutOfBounds }
+            }
+
+            async function startGazeEstimation() {
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+
+                video.addEventListener('loadeddata', async () => {
+                    await GazeEstimator.init('./resnet18.onnx');
+                    document.getElementById('status').innerText = 'model読み込み完了';
+                    async function estimateGaze() {
+                        const { estimateImage, gazePitch, gazeYaw, isOutOfBounds } = await processVideoFrame(canvas);
+                        if (isOutOfBounds != null) {
+                            if (isOutOfBounds) {
+                                canvas.classList.add('invalid');
+                                canvas.classList.remove('valid');
+                            } else {
+                                canvas.classList.add('valid');
+                                canvas.classList.remove('invalid');
+                            }
                         } else {
-                            canvas.classList.add('valid');
+                            canvas.classList.remove('valid');
                             canvas.classList.remove('invalid');
                         }
-                    } else {
-                        canvas.classList.remove('valid');
-                        canvas.classList.remove('invalid');
+
+                        // Update the FPS display
+                        const now = performance.now();
+                        if (!window.lastFrameTime) {
+                            window.lastFrameTime = now;
+                            window.frameCount = 0;
+                        }
+                        window.frameCount++;
+                        const elapsed = now - window.lastFrameTime;
+                        if (elapsed >= 1000) {
+                            const fps = (window.frameCount / (elapsed / 1000)).toFixed(2);
+                            document.getElementById('fps').innerText = `FPS: ${fps}`;
+                            window.lastFrameTime = now;
+                            window.frameCount = 0;
+                        }
+
+                        // Call this function repeatedly
+                        requestAnimationFrame(estimateGaze);
                     }
-        
-                    // Call this function repeatedly
-                    requestAnimationFrame(estimateGaze);
-                }
 
-                estimateGaze();
-            });
-        }
-
-        startGazeEstimation().catch(err => {
-            console.error('Error starting gaze estimation:', err);
-        });
-
-        const borders = {};
-        document.querySelectorAll('.angle-button').forEach(button => {
-            const canvas = document.querySelector(`canvas[data-for="${button.id}"]`);
-            const ctx = canvas.getContext('2d');
-            button.addEventListener('click', async (e) => {
-                const { estimateImage, gazePitch, gazeYaw } = await processVideoFrame(canvas);
-                if (estimateImage) {
-                    borders[button.id] = {
-                        pitch: gazePitch,
-                        yaw: gazeYaw
-                    };
-                }
-            });
-        });
-    
-        function isOutOfBounds(pitch, yaw)
-        {
-            if (!(borders.topLeft && borders.topRight && borders.bottomRight && borders.bottomLeft)) return;
-            const topLeft = borders.topLeft;
-            const topRight = borders.topRight;
-            const bottomLeft = borders.bottomLeft;
-            const bottomRight = borders.bottomRight;
-    
-            if (pitch > 0) {
-                if (pitch > topLeft.pitch && pitch > topRight.pitch) {
-                    return true;
-                }
-            } else {
-                if (pitch < bottomLeft.pitch && pitch < bottomRight.pitch) {
-                    return true;
-                }
+                    estimateGaze();
+                });
             }
-            if (yaw > 0) {
-                if (yaw > topRight.yaw && yaw > bottomRight.yaw) {
-                    return true;
-                }
-            } else {
-                if (yaw < topLeft.yaw && yaw < bottomLeft.yaw) {
-                    return true;
-                }
-            }
-    
-            return false;
+
+            startGazeEstimation().catch(err => {
+                // console.error('Error starting gaze estimation:', err);
+            });
+
+            const borders = {};
+            document.querySelectorAll('.angle-button').forEach(button => {
+                const canvas = document.querySelector(`canvas[data-for="${button.id}"]`);
+                const ctx = canvas.getContext('2d');
+                button.addEventListener('click', async (e) => {
+                    const { estimateImage, gazePitch, gazeYaw } = await processVideoFrame(canvas);
+                    if (estimateImage) {
+                        GazeEstimator.setRectPoint(button.id, {
+                            pitch: gazePitch,
+                            yaw: gazeYaw
+                        });
+                    }
+                });
+            });
         }
     </script>
 </body>
+
 </html>
